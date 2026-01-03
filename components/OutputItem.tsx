@@ -1,5 +1,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { HistoryItem, MessageType } from '../types';
 
 interface OutputItemProps {
@@ -42,7 +44,7 @@ export const OutputItem: React.FC<OutputItemProps> = ({ item }) => {
     <div className={`mb-8 pl-[2.25rem] text-claude-text/90 leading-7 max-w-full overflow-x-hidden ${animationClass}`}>
       <ReactMarkdown
         components={{
-          code({ className, children, ...props }) {
+          code({ node, className, children, ...props }) {
             const match = /language-(\w+)/.exec(className || '');
             const isInline = !match && !String(children).includes('\n');
             
@@ -55,15 +57,30 @@ export const OutputItem: React.FC<OutputItemProps> = ({ item }) => {
             }
 
             return (
-              <div className="my-5 overflow-hidden rounded border border-claude-border/50 bg-[#0c0c0e]">
-                <div className="flex items-center justify-between bg-white/5 px-4 py-2 text-xs text-claude-dim border-b border-claude-border/30 font-sans">
+              <div className="my-5 overflow-hidden rounded border border-claude-border/50 bg-[#1e1e1e]">
+                <div className="flex items-center justify-between bg-[#2d2d2d] px-4 py-2 text-xs text-gray-400 border-b border-white/10 font-sans select-none">
                   <span>{match ? match[1] : 'text'}</span>
                 </div>
-                <div className="overflow-x-auto p-4">
-                  <code className={`${className} text-sm`} {...props}>
-                    {children}
-                  </code>
-                </div>
+                <SyntaxHighlighter
+                  {...props}
+                  style={vscDarkPlus}
+                  language={match ? match[1] : 'text'}
+                  PreTag="div"
+                  customStyle={{
+                    margin: 0,
+                    padding: '1.5rem',
+                    background: 'transparent',
+                    fontSize: '0.875rem',
+                    lineHeight: '1.5',
+                  }}
+                  codeTagProps={{
+                    style: {
+                        fontFamily: '"JetBrains Mono", monospace'
+                    }
+                  }}
+                >
+                  {String(children).replace(/\n$/, '')}
+                </SyntaxHighlighter>
               </div>
             );
           },

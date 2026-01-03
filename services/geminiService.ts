@@ -1,4 +1,4 @@
-import { GoogleGenAI, Chat } from "@google/genai";
+import { GoogleGenAI, Chat, GenerateContentResponse } from "@google/genai";
 import { SYSTEM_INSTRUCTION } from "../constants";
 import { HistoryItem, MessageType, AIProvider } from "../types";
 
@@ -34,26 +34,69 @@ const initializeGemini = () => {
   }
 };
 
-const getGeminiStream = async function* (message: string) {
+const getGeminiStream = async function* (message: string, contextContent?: string) {
   initializeGemini();
   if (!genAI) throw new Error("Gemini client initialization failed.");
+
+  // If we have new context and a session exists, we might need to recreate it or send it as part of the message
+  // For simplicity, if context is provided, we send it in the message prompt this turn.
+  
+  let effectiveMessage = message;
+  if (contextContent) {
+    effectiveMessage = `[CONTEXT FILE LOADED]\n${contextContent}\n\n[USER QUERY]\n${message}`;
+  }
 
   if (!chatSession) {
     chatSession = genAI.chats.create({
       model: currentModel,
-      config: { systemInstruction: SYSTEM_INSTRUCTION },
+      config: { 
+        systemInstruction: SYSTEM_INSTRUCTION,
+        tools: [{ googleSearch: {} }] // Enable Google Search Grounding
+      },
     });
   }
 
-  const result = await chatSession.sendMessageStream({ message });
+  // We need to type the result stream correctly to access grounding metadata
+  const result = await chatSession.sendMessageStream({ message: effectiveMessage });
+  
+  let accumulatedGrounding: any[] = [];
+
   for await (const chunk of result) {
-    if (chunk.text) yield chunk.text;
+    // Check for grounding chunks
+    const c = chunk as any;
+    if (c.candidates?.[0]?.groundingMetadata?.groundingChunks) {
+      accumulatedGrounding = c.candidates[0].groundingMetadata.groundingChunks;
+    }
+    
+    if (c.text) {
+      yield c.text;
+    }
+  }
+
+  // Append sources if available
+  if (accumulatedGrounding.length > 0) {
+    let sourcesText = "\n\n---\n**Sources:**\n";
+    const uniqueLinks = new Set();
+    let index = 1;
+
+    for (const chunk of accumulatedGrounding) {
+      if (chunk.web?.uri && chunk.web?.title) {
+        if (!uniqueLinks.has(chunk.web.uri)) {
+          sourcesText += `${index}. [${chunk.web.title}](${chunk.web.uri})\n`;
+          uniqueLinks.add(chunk.web.uri);
+          index++;
+        }
+      }
+    }
+    if (uniqueLinks.size > 0) {
+      yield sourcesText;
+    }
   }
 };
 
 // --- Local (Ollama) Implementation ---
 
-const getLocalStream = async function* (message: string, history: HistoryItem[]) {
+const getLocalStream = async function* (message: string, history: HistoryItem[], contextContent?: string) {
   // Convert history to OpenAI/Ollama format
   const messages = history
     .filter(h => h.type === MessageType.USER || h.type === MessageType.ASSISTANT || h.type === MessageType.SYSTEM)
@@ -62,8 +105,16 @@ const getLocalStream = async function* (message: string, history: HistoryItem[])
       content: h.content
     }));
 
+  let effectiveMessage = message;
+  // Inject context for local RAG-lite
+  if (contextContent) {
+    // If context is huge, this might hit context limits of local models.
+    // For a basic implementation, we prepend it.
+    effectiveMessage = `Context from uploaded file:\n${contextContent}\n\nUser Question:\n${message}`;
+  }
+
   // Add current message
-  messages.push({ role: 'user', content: message });
+  messages.push({ role: 'user', content: effectiveMessage });
   
   // Prepend system instruction if not present
   if (messages.length === 0 || messages[0].role !== 'system') {
@@ -121,12 +172,12 @@ export const resetSession = () => {
   chatSession = null;
 };
 
-export const streamResponse = async function* (message: string, history: HistoryItem[]) {
+export const streamResponse = async function* (message: string, history: HistoryItem[], contextContent?: string) {
   try {
     if (currentProvider === 'GEMINI') {
-      yield* getGeminiStream(message);
+      yield* getGeminiStream(message, contextContent);
     } else {
-      yield* getLocalStream(message, history);
+      yield* getLocalStream(message, history, contextContent);
     }
   } catch (error) {
     console.error("AI Service Error:", error);

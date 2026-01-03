@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { OutputItem } from './OutputItem';
-// Fix: Import streamResponse correctly from service
 import { streamResponse, resetSession, setConnectionConfig } from '../services/geminiService';
+import { triggerFileSelect, processFile, FileContext } from '../services/fileService';
 import { HistoryItem, MessageType, ConnectionState } from '../types';
 import { INITIAL_GREETING } from '../constants';
 
@@ -16,6 +16,9 @@ export const Terminal: React.FC<TerminalProps> = ({ onConnectionChange }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
+  
+  // New State for Context
+  const [activeContext, setActiveContext] = useState<FileContext | null>(null);
   
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -66,16 +69,47 @@ export const Terminal: React.FC<TerminalProps> = ({ onConnectionChange }) => {
 Commands:
   connect gemini                 Connect to Gemini Cloud (Default)
   connect local <model> [url]    Connect to Localhost (e.g., connect local llama3)
+  upload                         Upload a file (PDF/Text) for context
+  context                        View current loaded context
   clear                          Clear terminal
   reset                          Reset conversation context
   
-Note for Local: Ensure your local server allows CORS (OLLAMA_ORIGINS="*").
+Features:
+  - Google Search Grounding (Gemini)
+  - PDF/Text Parsing & RAG (Local/Cloud)
         `);
         return;
 
       case 'reset':
         resetSession();
-        addHistoryItem(MessageType.SYSTEM, "Conversation context reset.");
+        setActiveContext(null);
+        addHistoryItem(MessageType.SYSTEM, "Conversation context and files reset.");
+        return;
+
+      case 'upload':
+        try {
+          addHistoryItem(MessageType.SYSTEM, "Select a file to upload...");
+          const file = await triggerFileSelect();
+          if (file) {
+             addHistoryItem(MessageType.SYSTEM, `Processing ${file.name}...`);
+             const context = await processFile(file);
+             setActiveContext(context);
+             addHistoryItem(MessageType.INFO, `Loaded: ${file.name} (${Math.round(context.content.length / 1024)} KB)\nContent is now available to the model.`);
+          } else {
+             addHistoryItem(MessageType.SYSTEM, "No file selected.");
+          }
+        } catch (err) {
+          addHistoryItem(MessageType.ERROR, "Error reading file.");
+          console.error(err);
+        }
+        return;
+
+      case 'context':
+        if (activeContext) {
+           addHistoryItem(MessageType.INFO, `Active Context:\nFile: ${activeContext.name}\nType: ${activeContext.type}\nSize: ${activeContext.content.length} characters`);
+        } else {
+           addHistoryItem(MessageType.INFO, "No context loaded.");
+        }
         return;
 
       case 'connect':
@@ -109,9 +143,22 @@ Note for Local: Ensure your local server allows CORS (OLLAMA_ORIGINS="*").
         let fullResponse = '';
 
         try {
-          // Pass full history to support local models which are stateless in this implementation
-          // Fix: Call streamResponse instead of streamGeminiResponse
-          const stream = streamResponse(message, history);
+          // If context is active, we only send it once per upload or re-send it? 
+          // For this implementation, we send it if it exists. 
+          // The service handles injecting it.
+          const contextContent = activeContext ? activeContext.content : undefined;
+          
+          // Clear active context usage flag if you only want to send it once? 
+          // Keeping it simple: it sends every time implies "Chat with PDF" mode.
+          // To prevent token bloat, a smarter system would send it once to "cache" it. 
+          // Since Gemini Chat sessions handle history, we only need to send it if it's NEW.
+          // But managing "newness" adds complexity. 
+          // Let's pass it. The Service will make it part of the prompt.
+          
+          // Optimized: Only send context if it hasn't been "consumed" by the session?
+          // For now, we pass it every time for Local (stateless here) and Gemini service handles logic.
+          
+          const stream = streamResponse(message, history, contextContent);
           
           for await (const chunk of stream) {
             fullResponse += chunk;
@@ -171,6 +218,11 @@ Note for Local: Ensure your local server allows CORS (OLLAMA_ORIGINS="*").
       </div>
 
       <div className="mt-2 mb-6 pt-4 shrink-0 bg-claude-bg">
+        {activeContext && (
+           <div className="mb-2 px-3 py-1 text-xs text-claude-accent border border-claude-accent/30 inline-block rounded bg-claude-accent/5">
+             Context: {activeContext.name}
+           </div>
+        )}
         <div className="relative flex items-center group">
           <span className={`text-claude-accent font-bold mr-3 select-none text-lg transition-opacity duration-300 ${isProcessing ? 'opacity-50' : 'opacity-100'}`}>➜</span>
           <input
@@ -182,7 +234,7 @@ Note for Local: Ensure your local server allows CORS (OLLAMA_ORIGINS="*").
             disabled={isProcessing}
             autoFocus
             className="w-full bg-transparent border-none outline-none text-white placeholder-claude-dim/30 font-medium text-lg caret-claude-accent"
-            placeholder={isProcessing ? "" : "Type a command or message..."}
+            placeholder={isProcessing ? "" : "Type 'help', 'upload', or a message..."}
             autoComplete="off"
             spellCheck={false}
           />
