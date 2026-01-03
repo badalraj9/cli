@@ -2,23 +2,30 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { OutputItem } from './OutputItem';
 import { streamResponse, resetSession, setConnectionConfig } from '../services/geminiService';
-import { triggerFileSelect, processFile, FileContext } from '../services/fileService';
-import { HistoryItem, MessageType, ConnectionState } from '../types';
+import { triggerFileSelect, processFile } from '../services/fileService';
+import { HistoryItem, MessageType, ConnectionState, FileContext } from '../types';
 import { INITIAL_GREETING } from '../constants';
 
 interface TerminalProps {
   onConnectionChange: (state: ConnectionState) => void;
+  files: FileContext[];
+  setFiles: React.Dispatch<React.SetStateAction<FileContext[]>>;
+  setPreviewContent: (content: string) => void;
+  setIsPreviewOpen: (isOpen: boolean) => void;
 }
 
-export const Terminal: React.FC<TerminalProps> = ({ onConnectionChange }) => {
+export const Terminal: React.FC<TerminalProps> = ({
+  onConnectionChange,
+  files,
+  setFiles,
+  setPreviewContent,
+  setIsPreviewOpen
+}) => {
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
-  
-  // New State for Context
-  const [activeContext, setActiveContext] = useState<FileContext | null>(null);
   
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -63,6 +70,46 @@ export const Terminal: React.FC<TerminalProps> = ({ onConnectionChange }) => {
       case 'cls':
         setHistory([]);
         return;
+
+      case 'export': {
+        const filename = args[1] || `conversation-${new Date().toISOString().slice(0, 10)}.md`;
+        let content = `# Conversation Log\nDate: ${new Date().toLocaleString()}\n\n`;
+
+        history.forEach(item => {
+          if (item.type === MessageType.USER) {
+            content += `## User\n${item.content}\n\n`;
+          } else if (item.type === MessageType.ASSISTANT) {
+            content += `## AI\n${item.content}\n\n`;
+          }
+        });
+
+        const blob = new Blob([content], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename.endsWith('.md') ? filename : `${filename}.md`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        addHistoryItem(MessageType.INFO, `Exported conversation to ${a.download}`);
+        return;
+      }
+
+      case 'preview': {
+        const subCmd = args[1];
+        if (subCmd === 'close' || subCmd === 'off') {
+            setIsPreviewOpen(false);
+            addHistoryItem(MessageType.INFO, "Preview panel closed.");
+        } else {
+            // If the user provided content, use it? Or just toggle last?
+            // For now, simple toggle of existing content or last HTML block
+            setIsPreviewOpen(true);
+            addHistoryItem(MessageType.INFO, "Preview panel opened.");
+        }
+        return;
+      }
         
       case 'help':
         addHistoryItem(MessageType.INFO, `
@@ -71,18 +118,21 @@ Commands:
   connect local <model> [url]    Connect to Localhost (e.g., connect local llama3)
   upload                         Upload a file (PDF/Text) for context
   context                        View current loaded context
+  export [filename]              Export conversation to Markdown
+  preview [off]                  Toggle preview panel
   clear                          Clear terminal
   reset                          Reset conversation context
   
 Features:
   - Google Search Grounding (Gemini)
   - PDF/Text Parsing & RAG (Local/Cloud)
+  - Multi-file Context Support
         `);
         return;
 
       case 'reset':
         resetSession();
-        setActiveContext(null);
+        setFiles([]);
         addHistoryItem(MessageType.SYSTEM, "Conversation context and files reset.");
         return;
 
@@ -93,8 +143,8 @@ Features:
           if (file) {
              addHistoryItem(MessageType.SYSTEM, `Processing ${file.name}...`);
              const context = await processFile(file);
-             setActiveContext(context);
-             addHistoryItem(MessageType.INFO, `Loaded: ${file.name} (${Math.round(context.content.length / 1024)} KB)\nContent is now available to the model.`);
+             setFiles(prev => [...prev, context]);
+             addHistoryItem(MessageType.INFO, `Loaded: ${file.name} (${Math.round(context.content.length / 1024)} KB)\nFile added to active context.`);
           } else {
              addHistoryItem(MessageType.SYSTEM, "No file selected.");
           }
@@ -105,8 +155,12 @@ Features:
         return;
 
       case 'context':
-        if (activeContext) {
-           addHistoryItem(MessageType.INFO, `Active Context:\nFile: ${activeContext.name}\nType: ${activeContext.type}\nSize: ${activeContext.content.length} characters`);
+        if (files.length > 0) {
+           let msg = `Active Context (${files.length} files):\n`;
+           files.forEach((f, i) => {
+             msg += `${i+1}. ${f.name} (${Math.round(f.content.length / 1024)} KB) [${f.type}]\n`;
+           });
+           addHistoryItem(MessageType.INFO, msg);
         } else {
            addHistoryItem(MessageType.INFO, "No context loaded.");
         }
@@ -143,22 +197,7 @@ Features:
         let fullResponse = '';
 
         try {
-          // If context is active, we only send it once per upload or re-send it? 
-          // For this implementation, we send it if it exists. 
-          // The service handles injecting it.
-          const contextContent = activeContext ? activeContext.content : undefined;
-          
-          // Clear active context usage flag if you only want to send it once? 
-          // Keeping it simple: it sends every time implies "Chat with PDF" mode.
-          // To prevent token bloat, a smarter system would send it once to "cache" it. 
-          // Since Gemini Chat sessions handle history, we only need to send it if it's NEW.
-          // But managing "newness" adds complexity. 
-          // Let's pass it. The Service will make it part of the prompt.
-          
-          // Optimized: Only send context if it hasn't been "consumed" by the session?
-          // For now, we pass it every time for Local (stateless here) and Gemini service handles logic.
-          
-          const stream = streamResponse(message, history, contextContent);
+          const stream = streamResponse(message, history, files);
           
           for await (const chunk of stream) {
             fullResponse += chunk;
@@ -212,15 +251,22 @@ Features:
     >
       <div className="flex-1 overflow-y-auto scrollbar-hide">
         {history.map(item => (
-          <OutputItem key={item.id} item={item} />
+          <OutputItem
+            key={item.id}
+            item={item}
+            onPreview={(code) => {
+              setPreviewContent(code);
+              setIsPreviewOpen(true);
+            }}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
 
       <div className="mt-2 mb-6 pt-4 shrink-0 bg-claude-bg">
-        {activeContext && (
+        {files.length > 0 && (
            <div className="mb-2 px-3 py-1 text-xs text-claude-accent border border-claude-accent/30 inline-block rounded bg-claude-accent/5">
-             Context: {activeContext.name}
+             Context: {files.length} file(s) loaded
            </div>
         )}
         <div className="relative flex items-center group">

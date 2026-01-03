@@ -1,6 +1,6 @@
 import { GoogleGenAI, Chat, GenerateContentResponse } from "@google/genai";
 import { SYSTEM_INSTRUCTION } from "../constants";
-import { HistoryItem, MessageType, AIProvider } from "../types";
+import { HistoryItem, MessageType, AIProvider, FileContext } from "../types";
 
 // Configuration State
 let currentProvider: AIProvider = 'GEMINI';
@@ -22,6 +22,17 @@ export const setConnectionConfig = (provider: AIProvider, model: string, url?: s
   chatSession = null;
 };
 
+// --- Helper: Format Context ---
+const formatContext = (files: FileContext[]): string => {
+  if (!files || files.length === 0) return '';
+
+  let contextString = '[CONTEXT FILES LOADED]\n';
+  files.forEach((file, index) => {
+    contextString += `\n--- FILE ${index + 1}: ${file.name} ---\n${file.content}\n`;
+  });
+  return contextString;
+};
+
 // --- Gemini Implementation ---
 
 const initializeGemini = () => {
@@ -34,16 +45,15 @@ const initializeGemini = () => {
   }
 };
 
-const getGeminiStream = async function* (message: string, contextContent?: string) {
+const getGeminiStream = async function* (message: string, files: FileContext[]) {
   initializeGemini();
   if (!genAI) throw new Error("Gemini client initialization failed.");
 
-  // If we have new context and a session exists, we might need to recreate it or send it as part of the message
-  // For simplicity, if context is provided, we send it in the message prompt this turn.
+  const contextContent = formatContext(files);
   
   let effectiveMessage = message;
   if (contextContent) {
-    effectiveMessage = `[CONTEXT FILE LOADED]\n${contextContent}\n\n[USER QUERY]\n${message}`;
+    effectiveMessage = `${contextContent}\n\n[USER QUERY]\n${message}`;
   }
 
   if (!chatSession) {
@@ -96,7 +106,7 @@ const getGeminiStream = async function* (message: string, contextContent?: strin
 
 // --- Local (Ollama) Implementation ---
 
-const getLocalStream = async function* (message: string, history: HistoryItem[], contextContent?: string) {
+const getLocalStream = async function* (message: string, history: HistoryItem[], files: FileContext[]) {
   // Convert history to OpenAI/Ollama format
   const messages = history
     .filter(h => h.type === MessageType.USER || h.type === MessageType.ASSISTANT || h.type === MessageType.SYSTEM)
@@ -106,11 +116,13 @@ const getLocalStream = async function* (message: string, history: HistoryItem[],
     }));
 
   let effectiveMessage = message;
+  const contextContent = formatContext(files);
+
   // Inject context for local RAG-lite
   if (contextContent) {
     // If context is huge, this might hit context limits of local models.
     // For a basic implementation, we prepend it.
-    effectiveMessage = `Context from uploaded file:\n${contextContent}\n\nUser Question:\n${message}`;
+    effectiveMessage = `${contextContent}\n\nUser Question:\n${message}`;
   }
 
   // Add current message
@@ -172,12 +184,12 @@ export const resetSession = () => {
   chatSession = null;
 };
 
-export const streamResponse = async function* (message: string, history: HistoryItem[], contextContent?: string) {
+export const streamResponse = async function* (message: string, history: HistoryItem[], files: FileContext[]) {
   try {
     if (currentProvider === 'GEMINI') {
-      yield* getGeminiStream(message, contextContent);
+      yield* getGeminiStream(message, files);
     } else {
-      yield* getLocalStream(message, history, contextContent);
+      yield* getLocalStream(message, history, files);
     }
   } catch (error) {
     console.error("AI Service Error:", error);

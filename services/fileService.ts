@@ -1,4 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import { v4 as uuidv4 } from 'uuid';
+import { FileContext } from '../types';
 
 // Access the library object correctly whether it's a default export or named exports
 const pdfjs = (pdfjsLib as any).default || pdfjsLib;
@@ -8,17 +10,11 @@ if (pdfjs.GlobalWorkerOptions) {
     pdfjs.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 }
 
-export interface FileContext {
-  name: string;
-  content: string;
-  type: string;
-}
-
 export const triggerFileSelect = (): Promise<File | null> => {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.pdf,.txt,.md,.json,.js,.ts,.tsx';
+    input.accept = '.pdf,.txt,.md,.json,.js,.ts,.tsx,.csv';
     input.onchange = (e) => {
       const file = (e.target as HTMLInputElement).files?.[0] || null;
       resolve(file);
@@ -61,6 +57,7 @@ export const processFile = async (file: File): Promise<FileContext> => {
   }
 
   return {
+    id: uuidv4(),
     name: file.name,
     type: file.type,
     content: content.trim()

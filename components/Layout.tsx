@@ -1,18 +1,56 @@
-import React from 'react';
-import { ConnectionState } from '../types';
+import React, { useState } from 'react';
+import { ConnectionState, FileContext } from '../types';
+import { ContextSidebar } from './ContextSidebar';
+import { PreviewPanel } from './PreviewPanel';
 
 interface LayoutProps {
   children: React.ReactNode;
   connectionState: ConnectionState;
+  files: FileContext[];
+  onRemoveFile: (id: string) => void;
+  onClearFiles: () => void;
+  // Preview Props
+  isPreviewOpen: boolean;
+  previewContent: string;
+  onClosePreview: () => void;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, connectionState }) => {
+export const Layout: React.FC<LayoutProps> = ({
+  children,
+  connectionState,
+  files,
+  onRemoveFile,
+  onClearFiles,
+  isPreviewOpen,
+  previewContent,
+  onClosePreview
+}) => {
   const isLocal = connectionState.provider === 'LOCAL';
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   return (
-    <div className="h-screen w-screen bg-claude-bg text-claude-text flex flex-col items-center justify-center overflow-hidden">
+    <div className="h-screen w-screen bg-claude-bg text-claude-text flex flex-col items-center justify-center overflow-hidden relative">
+
+      <ContextSidebar
+        files={files}
+        onRemove={onRemoveFile}
+        onClear={onClearFiles}
+        isOpen={isSidebarOpen}
+        onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
+      />
+
+      <PreviewPanel
+        isOpen={isPreviewOpen}
+        content={previewContent}
+        onClose={onClosePreview}
+      />
+
       {/* Main Container */}
-      <div className="w-full h-full max-w-4xl flex flex-col relative bg-claude-bg">
+      <div className={`
+        w-full h-full max-w-4xl flex flex-col relative bg-claude-bg transition-all duration-300
+        ${isSidebarOpen ? 'mr-64' : ''}
+        ${isPreviewOpen ? 'w-1/2 max-w-none border-r border-claude-border' : ''}
+      `}>
         
         {/* Minimal Header */}
         <div className="h-14 flex items-center justify-between px-6 shrink-0 select-none border-b border-claude-border/30 font-sans transition-colors duration-300">
