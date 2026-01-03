@@ -1,11 +1,12 @@
 import { GoogleGenAI, Chat, GenerateContentResponse } from "@google/genai";
-import { SYSTEM_INSTRUCTION } from "../constants";
+import { MODES } from "../constants";
 import { HistoryItem, MessageType, AIProvider } from "../types";
 
 // Configuration State
 let currentProvider: AIProvider = 'GEMINI';
 let currentModel = 'gemini-3-flash-preview';
 let localUrl = 'http://localhost:11434'; // Default Ollama port
+let currentSystemInstruction = MODES.chat.instruction;
 
 // Gemini State
 let chatSession: Chat | null = null;
@@ -19,6 +20,12 @@ export const setConnectionConfig = (provider: AIProvider, model: string, url?: s
   if (url) localUrl = url;
   
   // Reset sessions when switching
+  chatSession = null;
+};
+
+export const updateSystemInstruction = (instruction: string) => {
+  currentSystemInstruction = instruction;
+  // Reset session to apply new persona
   chatSession = null;
 };
 
@@ -50,7 +57,7 @@ const getGeminiStream = async function* (message: string, contextContent?: strin
     chatSession = genAI.chats.create({
       model: currentModel,
       config: { 
-        systemInstruction: SYSTEM_INSTRUCTION,
+        systemInstruction: currentSystemInstruction,
         tools: [{ googleSearch: {} }] // Enable Google Search Grounding
       },
     });
@@ -118,7 +125,10 @@ const getLocalStream = async function* (message: string, history: HistoryItem[],
   
   // Prepend system instruction if not present
   if (messages.length === 0 || messages[0].role !== 'system') {
-    messages.unshift({ role: 'system', content: SYSTEM_INSTRUCTION });
+    messages.unshift({ role: 'system', content: currentSystemInstruction });
+  } else if (messages[0].role === 'system') {
+      // Ensure the system instruction matches the current mode
+      messages[0].content = currentSystemInstruction;
   }
 
   // Attempt to fetch from local endpoint (Assumes Ollama /api/chat format)

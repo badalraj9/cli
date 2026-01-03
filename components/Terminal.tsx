@@ -1,24 +1,35 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { OutputItem } from './OutputItem';
-import { streamResponse, resetSession, setConnectionConfig } from '../services/geminiService';
-import { triggerFileSelect, processFile, FileContext } from '../services/fileService';
-import { HistoryItem, MessageType, ConnectionState } from '../types';
-import { INITIAL_GREETING } from '../constants';
+import { streamResponse, resetSession, setConnectionConfig, updateSystemInstruction } from '../services/geminiService';
+import { triggerFileSelect, processFile } from '../services/fileService';
+import { HistoryItem, MessageType, ConnectionState, FileContext, Mode } from '../types';
+import { INITIAL_GREETING, MODES } from '../constants';
 
 interface TerminalProps {
   onConnectionChange: (state: ConnectionState) => void;
+  onLensToggle: (isOpen: boolean) => void;
+  onContextChange: (context: FileContext | null) => void;
+  isLensOpen: boolean;
+  activeContext: FileContext | null;
+  activeMode: Mode;
+  onModeChange: (mode: Mode) => void;
 }
 
-export const Terminal: React.FC<TerminalProps> = ({ onConnectionChange }) => {
+export const Terminal: React.FC<TerminalProps> = ({ 
+  onConnectionChange, 
+  onLensToggle, 
+  onContextChange,
+  isLensOpen,
+  activeContext,
+  activeMode,
+  onModeChange
+}) => {
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
-  
-  // New State for Context
-  const [activeContext, setActiveContext] = useState<FileContext | null>(null);
   
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -62,39 +73,89 @@ export const Terminal: React.FC<TerminalProps> = ({ onConnectionChange }) => {
       case 'clear':
       case 'cls':
         setHistory([]);
+        onLensToggle(false); 
         return;
         
       case 'help':
         addHistoryItem(MessageType.INFO, `
-Commands:
-  connect gemini                 Connect to Gemini Cloud (Default)
-  connect local <model> [url]    Connect to Localhost (e.g., connect local llama3)
-  upload                         Upload a file (PDF/Text) for context
-  context                        View current loaded context
+Core Commands:
+  mode <name>                    Switch intent mode (explain, code, doc, design, chat)
+  connect gemini                 Connect to Gemini Cloud
+  connect local <model> [url]    Connect to Localhost
+  upload                         Load document into Context
+  open / close                   Manage Document Lens
   clear                          Clear terminal
-  reset                          Reset conversation context
-  
-Features:
-  - Google Search Grounding (Gemini)
-  - PDF/Text Parsing & RAG (Local/Cloud)
+  reset                          Reset session & context
+
+Current Mode: ${activeMode.toUpperCase()}
         `);
+        return;
+
+      case 'mode':
+        if (!args[1]) {
+           const modesList = Object.entries(MODES).map(([key, val]) => 
+             `  ${key.padEnd(10)} – ${val.description}`
+           ).join('\n');
+           
+           addHistoryItem(MessageType.INFO, `
+Available Modes:
+${modesList}
+
+Usage: mode <name>
+Current: ${activeMode.toUpperCase()}
+           `);
+        } else {
+           const targetMode = args[1].toLowerCase();
+           if (targetMode in MODES) {
+             const newMode = targetMode as Mode;
+             onModeChange(newMode);
+             updateSystemInstruction(MODES[newMode].instruction);
+             addHistoryItem(MessageType.SYSTEM, `Switched to [${newMode.toUpperCase()}] mode.\n${MODES[newMode].description}`);
+           } else {
+             addHistoryItem(MessageType.ERROR, `Unknown mode: ${targetMode}`);
+           }
+        }
+        return;
+
+      case 'open':
+      case 'view':
+        if (!activeContext) {
+           addHistoryItem(MessageType.ERROR, "No context loaded. Use 'upload' first.");
+        } else {
+           onLensToggle(true);
+           addHistoryItem(MessageType.SYSTEM, `Opening Document Lens: ${activeContext.name}`);
+        }
+        return;
+
+      case 'close':
+        onLensToggle(false);
         return;
 
       case 'reset':
         resetSession();
-        setActiveContext(null);
-        addHistoryItem(MessageType.SYSTEM, "Conversation context and files reset.");
+        onContextChange(null);
+        onLensToggle(false);
+        onModeChange('chat'); // Reset to default mode
+        updateSystemInstruction(MODES.chat.instruction);
+        addHistoryItem(MessageType.SYSTEM, "System reset complete. Context cleared. Mode reset to CHAT.");
         return;
 
       case 'upload':
         try {
-          addHistoryItem(MessageType.SYSTEM, "Select a file to upload...");
+          addHistoryItem(MessageType.SYSTEM, "Select a file (PDF/MD/TXT)...");
           const file = await triggerFileSelect();
           if (file) {
              addHistoryItem(MessageType.SYSTEM, `Processing ${file.name}...`);
              const context = await processFile(file);
-             setActiveContext(context);
-             addHistoryItem(MessageType.INFO, `Loaded: ${file.name} (${Math.round(context.content.length / 1024)} KB)\nContent is now available to the model.`);
+             onContextChange(context);
+             onLensToggle(true); // Auto-open lens
+             
+             // Suggest DOC mode if not active
+             let msg = `Loaded: ${file.name} (${Math.round(context.content.length / 1024)} KB)\nDocument Lens opened.`;
+             if (activeMode !== 'doc') {
+                msg += `\n\n[TIP] Type 'mode doc' to optimize the model for document analysis.`;
+             }
+             addHistoryItem(MessageType.INFO, msg);
           } else {
              addHistoryItem(MessageType.SYSTEM, "No file selected.");
           }
@@ -106,7 +167,7 @@ Features:
 
       case 'context':
         if (activeContext) {
-           addHistoryItem(MessageType.INFO, `Active Context:\nFile: ${activeContext.name}\nType: ${activeContext.type}\nSize: ${activeContext.content.length} characters`);
+           addHistoryItem(MessageType.INFO, `Active Context:\nFile: ${activeContext.name}\nType: ${activeContext.type}\nSize: ${activeContext.content.length} chars`);
         } else {
            addHistoryItem(MessageType.INFO, "No context loaded.");
         }
@@ -143,20 +204,7 @@ Features:
         let fullResponse = '';
 
         try {
-          // If context is active, we only send it once per upload or re-send it? 
-          // For this implementation, we send it if it exists. 
-          // The service handles injecting it.
           const contextContent = activeContext ? activeContext.content : undefined;
-          
-          // Clear active context usage flag if you only want to send it once? 
-          // Keeping it simple: it sends every time implies "Chat with PDF" mode.
-          // To prevent token bloat, a smarter system would send it once to "cache" it. 
-          // Since Gemini Chat sessions handle history, we only need to send it if it's NEW.
-          // But managing "newness" adds complexity. 
-          // Let's pass it. The Service will make it part of the prompt.
-          
-          // Optimized: Only send context if it hasn't been "consumed" by the session?
-          // For now, we pass it every time for Local (stateless here) and Gemini service handles logic.
           
           const stream = streamResponse(message, history, contextContent);
           
@@ -219,8 +267,11 @@ Features:
 
       <div className="mt-2 mb-6 pt-4 shrink-0 bg-claude-bg">
         {activeContext && (
-           <div className="mb-2 px-3 py-1 text-xs text-claude-accent border border-claude-accent/30 inline-block rounded bg-claude-accent/5">
-             Context: {activeContext.name}
+           <div className="mb-2 flex items-center gap-2">
+             <span className="px-2 py-0.5 text-[10px] font-bold tracking-wider text-emerald-500 border border-emerald-500/30 bg-emerald-500/10 rounded uppercase">
+               Context Loaded
+             </span>
+             <span className="text-xs text-claude-dim">{activeContext.name}</span>
            </div>
         )}
         <div className="relative flex items-center group">
@@ -234,7 +285,7 @@ Features:
             disabled={isProcessing}
             autoFocus
             className="w-full bg-transparent border-none outline-none text-white placeholder-claude-dim/30 font-medium text-lg caret-claude-accent"
-            placeholder={isProcessing ? "" : "Type 'help', 'upload', or a message..."}
+            placeholder={isProcessing ? "" : `Type 'help' or query [${activeMode}]...`}
             autoComplete="off"
             spellCheck={false}
           />

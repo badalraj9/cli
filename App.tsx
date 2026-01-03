@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Layout } from './components/Layout';
 import { Terminal } from './components/Terminal';
-import { ConnectionState } from './types';
+import { ConnectionState, FileContext, Mode } from './types';
 
 const App: React.FC = () => {
   const [connectionState, setConnectionState] = useState<ConnectionState>({
@@ -10,9 +10,26 @@ const App: React.FC = () => {
     status: 'CONNECTED'
   });
 
+  const [isLensOpen, setIsLensOpen] = useState(false);
+  const [activeContext, setActiveContext] = useState<FileContext | null>(null);
+  const [activeMode, setActiveMode] = useState<Mode>('chat');
+
   return (
-    <Layout connectionState={connectionState}>
-      <Terminal onConnectionChange={setConnectionState} />
+    <Layout 
+      connectionState={connectionState}
+      isLensOpen={isLensOpen}
+      activeContext={activeContext}
+      activeMode={activeMode}
+    >
+      <Terminal 
+        onConnectionChange={setConnectionState}
+        onLensToggle={setIsLensOpen}
+        onContextChange={setActiveContext}
+        isLensOpen={isLensOpen}
+        activeContext={activeContext}
+        activeMode={activeMode}
+        onModeChange={setActiveMode}
+      />
     </Layout>
   );
 };

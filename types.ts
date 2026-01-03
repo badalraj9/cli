@@ -28,3 +28,11 @@ export interface ConnectionState {
   url?: string;
   status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
 }
+
+export interface FileContext {
+  name: string;
+  content: string;
+  type: string;
+}
+
+export type Mode = 'chat' | 'code' | 'doc' | 'explain' | 'design';
