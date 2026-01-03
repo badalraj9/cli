@@ -1,6 +1,7 @@
 import React from 'react';
 import { ConnectionState, FileContext, Mode } from '../types';
 import { GhostPane } from './GhostPane';
+import { PreviewPane } from './PreviewPane';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -8,16 +9,33 @@ interface LayoutProps {
   isLensOpen: boolean;
   activeContext: FileContext | null;
   activeMode: Mode;
+  onLensClose: () => void;
+  previewContent: string | null;
+  onPreviewClose: () => void;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, connectionState, isLensOpen, activeContext, activeMode }) => {
+export const Layout: React.FC<LayoutProps> = ({ 
+  children, 
+  connectionState, 
+  isLensOpen, 
+  activeContext, 
+  activeMode, 
+  onLensClose,
+  previewContent,
+  onPreviewClose
+}) => {
   const isLocal = connectionState.provider === 'LOCAL';
+
+  // Determine what to show in the right panel
+  const showPreview = previewContent !== null;
+  const showLens = isLensOpen && !showPreview;
+  const isSplitView = showPreview || showLens;
 
   return (
     <div className="h-screen w-screen bg-claude-bg text-claude-text flex flex-col items-center justify-center overflow-hidden transition-all duration-500 ease-in-out">
       {/* Main Container */}
       <div className={`h-full flex flex-col relative bg-claude-bg transition-all duration-500 ease-in-out ${
-        isLensOpen ? 'w-full max-w-[98vw]' : 'w-full max-w-4xl'
+        isSplitView ? 'w-full max-w-[98vw]' : 'w-full max-w-4xl'
       }`}>
         
         {/* Minimal Header */}
@@ -55,14 +73,18 @@ export const Layout: React.FC<LayoutProps> = ({ children, connectionState, isLen
         <div className="flex-1 flex overflow-hidden">
           
           {/* Terminal Area */}
-          <div className={`flex-1 overflow-hidden relative px-2 font-mono transition-all duration-500 ${isLensOpen ? 'basis-[65%]' : 'basis-full'}`}>
+          <div className={`flex-1 overflow-hidden relative px-2 font-mono transition-all duration-500 ${isSplitView ? 'basis-[65%]' : 'basis-full'}`}>
             {children}
           </div>
 
-          {/* Document Lens Area */}
-          {isLensOpen && (
+          {/* Right Panel Area (Lens or Preview) */}
+          {isSplitView && (
             <div className="basis-[35%] h-full transition-all duration-500 animate-slide-up border-l border-claude-border/30">
-              <GhostPane context={activeContext} />
+              {showPreview ? (
+                <PreviewPane content={previewContent} onClose={onPreviewClose} />
+              ) : (
+                <GhostPane context={activeContext} onClose={onLensClose} />
+              )}
             </div>
           )}
         </div>

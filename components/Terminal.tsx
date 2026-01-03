@@ -14,6 +14,7 @@ interface TerminalProps {
   activeContext: FileContext | null;
   activeMode: Mode;
   onModeChange: (mode: Mode) => void;
+  onPreviewUpdate: (content: string | null) => void;
 }
 
 export const Terminal: React.FC<TerminalProps> = ({ 
@@ -23,7 +24,8 @@ export const Terminal: React.FC<TerminalProps> = ({
   isLensOpen,
   activeContext,
   activeMode,
-  onModeChange
+  onModeChange,
+  onPreviewUpdate
 }) => {
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -35,8 +37,10 @@ export const Terminal: React.FC<TerminalProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
+    // Use 'auto' (instant) instead of 'smooth' to prevent jitter during streaming
+    // when content height changes rapidly
     requestAnimationFrame(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
     });
   };
 
@@ -52,6 +56,13 @@ export const Terminal: React.FC<TerminalProps> = ({
   useEffect(() => {
     scrollToBottom();
   }, [history]);
+
+  // Refocus input when Lens/Preview closes
+  useEffect(() => {
+    if (!isLensOpen) {
+      inputRef.current?.focus();
+    }
+  }, [isLensOpen]);
 
   const addHistoryItem = (type: MessageType, content: string, isStreaming = false): string => {
     const id = uuidv4();
@@ -74,6 +85,7 @@ export const Terminal: React.FC<TerminalProps> = ({
       case 'cls':
         setHistory([]);
         onLensToggle(false); 
+        onPreviewUpdate(null);
         return;
         
       case 'help':
@@ -84,11 +96,18 @@ Core Commands:
   connect local <model> [url]    Connect to Localhost
   upload                         Load document into Context
   open / close                   Manage Document Lens
+  preview close                  Close Live Preview
   clear                          Clear terminal
   reset                          Reset session & context
 
 Current Mode: ${activeMode.toUpperCase()}
         `);
+        return;
+
+      case 'preview':
+        if (args[1] === 'close') {
+            onPreviewUpdate(null);
+        }
         return;
 
       case 'mode':
@@ -111,6 +130,9 @@ Current: ${activeMode.toUpperCase()}
              onModeChange(newMode);
              updateSystemInstruction(MODES[newMode].instruction);
              addHistoryItem(MessageType.SYSTEM, `Switched to [${newMode.toUpperCase()}] mode.\n${MODES[newMode].description}`);
+             
+             // Close preview when switching modes to be clean
+             onPreviewUpdate(null);
            } else {
              addHistoryItem(MessageType.ERROR, `Unknown mode: ${targetMode}`);
            }
@@ -123,18 +145,21 @@ Current: ${activeMode.toUpperCase()}
            addHistoryItem(MessageType.ERROR, "No context loaded. Use 'upload' first.");
         } else {
            onLensToggle(true);
+           onPreviewUpdate(null); // Close preview if opening lens
            addHistoryItem(MessageType.SYSTEM, `Opening Document Lens: ${activeContext.name}`);
         }
         return;
 
       case 'close':
         onLensToggle(false);
+        onPreviewUpdate(null);
         return;
 
       case 'reset':
         resetSession();
         onContextChange(null);
         onLensToggle(false);
+        onPreviewUpdate(null);
         onModeChange('chat'); // Reset to default mode
         updateSystemInstruction(MODES.chat.instruction);
         addHistoryItem(MessageType.SYSTEM, "System reset complete. Context cleared. Mode reset to CHAT.");
@@ -149,6 +174,7 @@ Current: ${activeMode.toUpperCase()}
              const context = await processFile(file);
              onContextChange(context);
              onLensToggle(true); // Auto-open lens
+             onPreviewUpdate(null); // Prioritize lens
              
              // Suggest DOC mode if not active
              let msg = `Loaded: ${file.name} (${Math.round(context.content.length / 1024)} KB)\nDocument Lens opened.`;
@@ -196,6 +222,19 @@ Current: ${activeMode.toUpperCase()}
     }
   };
 
+  const extractPreviewableCode = (text: string): string | null => {
+    // Regex to find ```html or ```svg blocks
+    // We look for the LAST occurrence to get the final output
+    const regex = /```(html|svg)\n([\s\S]*?)```/g;
+    let match;
+    let lastMatch = null;
+    
+    while ((match = regex.exec(text)) !== null) {
+        lastMatch = match[2];
+    }
+    return lastMatch;
+  };
+
   const handleAIChat = async (message: string) => {
     setIsProcessing(true);
     
@@ -214,6 +253,16 @@ Current: ${activeMode.toUpperCase()}
             scrollToBottom();
           }
           updateHistoryItem(responseId, fullResponse, false);
+
+          // After response finishes, check for previewable code if in CODE mode
+          if (activeMode === 'code') {
+              const htmlContent = extractPreviewableCode(fullResponse);
+              if (htmlContent) {
+                  onPreviewUpdate(htmlContent);
+                  addHistoryItem(MessageType.INFO, "Live Preview updated.");
+              }
+          }
+
         } catch (error) {
           updateHistoryItem(responseId, "Connection error.", false);
         } finally {

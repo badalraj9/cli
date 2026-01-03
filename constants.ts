@@ -15,7 +15,7 @@ const BASE_INSTRUCTION = `
 You are a highly capable AI assistant interacting via a minimal CLI.
 CORE BEHAVIORS:
 1. **Markdown First**: Use Markdown for all responses.
-2. **No UI Generation**: Do NOT generate HTML/CSS/JS for rendering UI.
+2. **No UI Generation**: Do NOT generate HTML/CSS/JS for rendering UI unless explicitly asked for code.
 3. **Concise**: Be direct and professional.
 `;
 
@@ -35,7 +35,8 @@ export const MODES = {
     - Output strictly structured code or concise explanations.
     - Avoid conversational filler.
     - Prefer simple, efficient solutions.
-    - Use Markdown code blocks for all code.`
+    - Use Markdown code blocks for all code.
+    - **UI PREVIEW**: If the user asks for a UI component (HTML/CSS/SVG), output it in a single \`\`\`html\`\`\` code block containing the full code (structure + style) so it can be previewed immediately.`
   },
   explain: {
     description: 'Understand a topic',

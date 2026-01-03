@@ -13,6 +13,7 @@ const App: React.FC = () => {
   const [isLensOpen, setIsLensOpen] = useState(false);
   const [activeContext, setActiveContext] = useState<FileContext | null>(null);
   const [activeMode, setActiveMode] = useState<Mode>('chat');
+  const [previewContent, setPreviewContent] = useState<string | null>(null);
 
   return (
     <Layout 
@@ -20,6 +21,9 @@ const App: React.FC = () => {
       isLensOpen={isLensOpen}
       activeContext={activeContext}
       activeMode={activeMode}
+      onLensClose={() => setIsLensOpen(false)}
+      previewContent={previewContent}
+      onPreviewClose={() => setPreviewContent(null)}
     >
       <Terminal 
         onConnectionChange={setConnectionState}
@@ -29,6 +33,7 @@ const App: React.FC = () => {
         activeContext={activeContext}
         activeMode={activeMode}
         onModeChange={setActiveMode}
+        onPreviewUpdate={setPreviewContent}
       />
     </Layout>
   );

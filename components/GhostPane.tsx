@@ -4,9 +4,10 @@ import { FileContext } from '../types';
 
 interface GhostPaneProps {
   context: FileContext | null;
+  onClose: () => void;
 }
 
-export const GhostPane: React.FC<GhostPaneProps> = ({ context }) => {
+export const GhostPane: React.FC<GhostPaneProps> = ({ context, onClose }) => {
   if (!context) return null;
 
   const isMarkdown = context.name.toLowerCase().endsWith('.md');
@@ -29,6 +30,9 @@ export const GhostPane: React.FC<GhostPaneProps> = ({ context }) => {
     const scrollAmount = 200;
 
     switch (e.key) {
+      case 'Escape':
+        onClose();
+        break;
       case 'j':
       case 'ArrowDown':
         scrollRef.current.scrollBy({ top: scrollAmount, behavior: 'smooth' });
@@ -109,6 +113,7 @@ export const GhostPane: React.FC<GhostPaneProps> = ({ context }) => {
          <div className="flex gap-4 text-[9px] text-claude-dim/60 font-mono">
              <span className={isFocused ? "text-claude-dim" : ""}>j/k: scroll</span>
              <span className={isFocused ? "text-claude-dim" : ""}>g/G: top/bot</span>
+             <span className={isFocused ? "text-claude-dim" : ""}>ESC: close</span>
          </div>
          <span className="text-[10px] text-claude-dim font-mono">
             {context.content.length.toLocaleString()} chars
